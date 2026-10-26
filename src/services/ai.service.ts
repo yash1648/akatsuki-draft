@@ -15,11 +15,11 @@ export interface LlmOutput {
 
 export class AiService {
   /**
-   * Calls the configured Generative AI / Gemini LLM with timeout handling
+   * Calls the configured OpenRouter AI API with timeout handling
    */
   async callLlm(input: LlmInput): Promise<LlmOutput> {
-    const apiKey = process.env.GEMINI_API_KEY;
-    const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    const model = process.env.OPENROUTER_MODEL || "meta-llama/llama-3.3-70b-instruct";
     const timeoutMs = Number(process.env.AI_TIMEOUT_MS) || 30000;
 
     // If no API key is set (e.g. local development or testing without credentials),
@@ -31,7 +31,7 @@ export class AiService {
           ? `Polished summary: ${input.description.trim()}`
           : "Polished summary of content.",
         content: input.content
-          ? `${input.content.trim()}\n\n[Refined by Akatsuki Editorial AI for enhanced clarity and engagement]`
+          ? `${input.content.trim()}\n\n[Refined by Akatsuki Editorial AI via OpenRouter for enhanced clarity and engagement]`
           : "Refined body content."
       };
     }
@@ -40,9 +40,9 @@ export class AiService {
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const endpoint = "https://openrouter.ai/api/v1/chat/completions";
 
-      const prompt = `You are an expert editorial AI for Akatsuki's Draft platform.
+      const systemPrompt = `You are an expert editorial AI for Akatsuki's Draft platform.
 Your task is to improve clarity, grammar, flow, and engagement of the user's article while strictly preserving their core meaning, facts, and voice.
 You MUST output ONLY a valid JSON object with the following three string keys:
 {
@@ -50,39 +50,53 @@ You MUST output ONLY a valid JSON object with the following three string keys:
   "description": "<improved summary, max 300 chars>",
   "content": "<improved article body>"
 }
-
-Draft to improve:
-${JSON.stringify(input, null, 2)}`;
+Do not include any introductory remarks, markdown fences, or conversational filler outside the JSON.`;
 
       const response = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": process.env.APP_URL || "https://akatsuki-draft.vercel.app",
+          "X-Title": "Akatsuki Draft"
+        },
         signal: controller.signal,
         body: JSON.stringify({
-          contents: [
+          model,
+          messages: [
+            {
+              role: "system",
+              content: systemPrompt
+            },
             {
               role: "user",
-              parts: [{ text: prompt }]
+              content: JSON.stringify(input, null, 2)
             }
           ],
-          generationConfig: {
-            temperature: 0.7,
-            responseMimeType: "application/json"
-          }
+          response_format: { type: "json_object" },
+          temperature: 0.7
         })
       });
 
       if (!response.ok) {
-        throw new Error(`Upstream AI status ${response.status}: ${await response.text()}`);
+        throw new Error(`OpenRouter API error ${response.status}: ${await response.text()}`);
       }
 
       const data: any = await response.json();
-      const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      const rawText = data?.choices?.[0]?.message?.content;
       if (!rawText) {
-        throw new Error("Empty response from AI service");
+        throw new Error("Empty response received from OpenRouter API");
       }
 
-      const parsed: LlmOutput = JSON.parse(rawText);
+      // Strip markdown code fences if model enclosed JSON in ```json ... ```
+      let cleanedText = rawText.trim();
+      if (cleanedText.startsWith("```")) {
+        cleanedText = cleanedText
+          .replace(/^```(?:json)?\s*/i, "")
+          .replace(/\s*```$/i, "");
+      }
+
+      const parsed: LlmOutput = JSON.parse(cleanedText);
       return {
         title: parsed.title || input.title,
         description: parsed.description || input.description,

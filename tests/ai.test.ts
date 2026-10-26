@@ -145,4 +145,48 @@ describe("AI Content Improvement Module (/ai/improve/:postId)", () => {
     expect(res.status).toBe(504);
     expect(res.body.success).toBe(false);
   });
+
+  it("should call OpenRouter API with correct headers, model and strip markdown code fences", async () => {
+    process.env.OPENROUTER_API_KEY = "test-openrouter-key-12345";
+    process.env.OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct";
+
+    const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: "```json\n{\n  \"title\": \"Polished Title via OpenRouter\",\n  \"description\": \"Clean summary\",\n  \"content\": \"Clean polished text\"\n}\n```"
+            }
+          }
+        ]
+      })
+    } as any);
+
+    const output = await aiService.callLlm({
+      title: "raw title",
+      description: "raw desc",
+      content: "raw content"
+    });
+
+    expect(output.title).toBe("Polished Title via OpenRouter");
+    expect(output.description).toBe("Clean summary");
+    expect(output.content).toBe("Clean polished text");
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "https://openrouter.ai/api/v1/chat/completions",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer test-openrouter-key-12345",
+          "Content-Type": "application/json",
+          "X-Title": "Akatsuki Draft"
+        })
+      })
+    );
+
+    delete process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENROUTER_MODEL;
+    fetchSpy.mockRestore();
+  });
 });

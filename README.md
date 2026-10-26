@@ -23,12 +23,13 @@
 3. **AI Content Improvement (Non-Destructive Versioning):**
    - **FR-AI-1:** `POST /ai/improve/:postId` never mutates the original post.
    - **FR-AI-2:** Synthesizes an improved title, description, and content while copying category, image, author, and linking `parentPostId`, saving it as a distinct new document with `status: "draft"`.
-   - **NFR-PERF-2 & NFR-SEC-3:** Explicit 30s timeout, 10 requests/hour rate limiter, and graceful `502 Bad Gateway` / `504 Gateway Timeout` error handling. Supports Gemini API with intelligent local fallback.
+   - **NFR-PERF-2 & NFR-SEC-3:** Explicit 30s timeout, 10 requests/hour rate limiter, and graceful `502 Bad Gateway` / `504 Gateway Timeout` error handling. Powered by OpenRouter (`OPENROUTER_API_KEY` & `OPENROUTER_MODEL`) with intelligent local heuristic fallback.
 
 4. **Security & Non-Functional Requirements:**
    - **NoSQL Injection Defense (NFR-SEC-2):** Recursive stripping of `$` and `.` operators on `req.body`, `req.query`, and `req.params`.
    - **Compound Database Indexes (NFR-PERF-1):** `{ status: 1, createdAt: -1 }` and `{ createdBy: 1, createdAt: -1 }` on the `posts` collection.
    - **HTTP Protection:** Helmet headers (`x-frame-options`, `nosniff`), CORS, rate limiting.
+   - **Serverless Ready:** Pre-configured for Vercel deployment with `vercel.json` rewrites and `api/index.ts` connection reuse.
 
 ---
 
@@ -36,13 +37,15 @@
 
 ```
 akatsuki-draft/
+├── api/
+│   └── index.ts                                  # Vercel Serverless Function entry point
 ├── docs/
 │   ├── SRS.md                                    # Software Requirements Specification
 │   └── superpowers/plans/
 │       └── 2026-10-26-backend-implementation.md  # Implementation Plan
 ├── src/
 │   ├── config/
-│   │   └── database.ts                           # MongoDB connection handler
+│   │   └── database.ts                           # MongoDB connection handler (cached for serverless)
 │   ├── controllers/
 │   │   ├── admin.controller.ts                   # Admin approval & rejection handlers
 │   │   ├── ai.controller.ts                      # AI improvement handler
@@ -65,13 +68,13 @@ akatsuki-draft/
 │   │   └── post.routes.ts                        # /posts endpoints
 │   ├── services/
 │   │   ├── admin.service.ts
-│   │   ├── ai.service.ts
+│   │   ├── ai.service.ts                         # OpenRouter integration
 │   │   ├── auth.service.ts
 │   │   └── post.service.ts
 │   ├── utils/
 │   │   └── apiError.ts                           # Typed HTTP error classes
 │   ├── app.ts                                    # Express application configuration
-│   └── server.ts                                 # Application bootstrap & graceful shutdown
+│   └── server.ts                                 # Standalone server bootstrap & graceful shutdown
 ├── tests/
 │   ├── setup.ts                                  # In-memory MongoDB lifecycle for tests
 │   ├── admin.test.ts                             # Moderation module tests
@@ -83,6 +86,7 @@ akatsuki-draft/
 ├── .env.example                                  # Template for environment configuration
 ├── package.json
 ├── tsconfig.json
+├── vercel.json                                   # Vercel deployment configuration
 └── vitest.config.ts
 ```
 
@@ -109,11 +113,12 @@ cp .env.example .env
 |---|---|---|
 | `PORT` | HTTP port the server listens on | `5000` |
 | `NODE_ENV` | Environment (`development`, `production`, `test`) | `development` |
-| `MONGODB_URI` | MongoDB connection string | `mongodb://localhost:27017/akatsuki_draft` |
+| `MONGODB_URI` | MongoDB connection string (e.g. MongoDB Atlas) | `mongodb://localhost:27017/akatsuki_draft` |
 | `JWT_SECRET` | Secret key used to sign JWTs | (Required in production) |
 | `JWT_EXPIRES_IN` | Token expiration time | `24h` |
-| `GEMINI_API_KEY` | Google Gemini API key for AI text enhancement | (Optional in dev/test) |
-| `GEMINI_MODEL` | Gemini model name | `gemini-1.5-flash` |
+| `OPENROUTER_API_KEY` | OpenRouter API Key for AI text improvement | (Optional in dev/test) |
+| `OPENROUTER_MODEL` | Model id on OpenRouter (e.g. LLaMA 3.3, Claude, Gemini) | `meta-llama/llama-3.3-70b-instruct` |
+| `APP_URL` | Application URL (sent in `HTTP-Referer` header) | `https://akatsuki-draft.vercel.app` |
 | `AI_TIMEOUT_MS` | Upstream AI timeout in milliseconds | `30000` |
 
 ### 3. Development Server
@@ -132,6 +137,16 @@ Tests use an embedded in-memory MongoDB server (`mongodb-memory-server`) requiri
 ```bash
 npm test
 ```
+
+### 6. Deploying to Vercel
+This repository is configured for instantaneous deployment to Vercel via [`vercel.json`](vercel.json) and [`api/index.ts`](api/index.ts):
+1. Import the repository in your [Vercel Dashboard](https://vercel.com).
+2. Configure the following Environment Variables in Vercel Project Settings:
+   - `MONGODB_URI` (MongoDB Atlas URI)
+   - `JWT_SECRET` (A strong random secret key)
+   - `OPENROUTER_API_KEY` (Your OpenRouter API Key)
+   - `OPENROUTER_MODEL` (Optional, defaults to `meta-llama/llama-3.3-70b-instruct`)
+3. Deploy! Vercel handles serverless routing through `vercel.json` and manages database connection pooling efficiently.
 
 ---
 
